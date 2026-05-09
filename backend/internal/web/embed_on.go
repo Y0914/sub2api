@@ -22,6 +22,8 @@ import (
 const (
 	// NonceHTMLPlaceholder is the placeholder for nonce in HTML script tags
 	NonceHTMLPlaceholder = "__CSP_NONCE_VALUE__"
+	settingsScriptPrefix = "window.__APP_CONFIG__="
+	settingsSlotPlaceholder = "<!-- __APP_CONFIG_SLOT__ -->"
 )
 
 //go:embed all:dist
@@ -35,12 +37,13 @@ type PublicSettingsProvider interface {
 // FrontendServer serves frontend assets with settings injection.
 // It can be backed by embedded dist files or an external frontend directory.
 type FrontendServer struct {
-	distFS      fs.FS
-	fileServer  http.Handler
-	baseHTML    []byte
-	cache       *HTMLCache
-	settings    PublicSettingsProvider
-	overrideDir string // local file override directory
+	distFS       fs.FS
+	fileServer   http.Handler
+	baseHTML     []byte
+	cache        *HTMLCache
+	settings     PublicSettingsProvider
+	overrideDir  string // local file override directory
+	settingsSlot string // marker used to detect/replace pre-injected config blocks
 }
 
 // NewFrontendServer creates a frontend server with settings injection.
@@ -84,15 +87,20 @@ func NewFrontendServer(settingsProvider PublicSettingsProvider, externalDir stri
 	}
 
 	cache := NewHTMLCache()
+	settingsSlot := detectSettingsSlot(baseHTML)
+	if settingsSlot != "" {
+		baseHTML = removeInjectedSettings(baseHTML, settingsSlot)
+	}
 	cache.SetBaseHTML(baseHTML)
 
 	return &FrontendServer{
-		distFS:      distFS,
-		fileServer:  fileServer,
-		baseHTML:    baseHTML,
-		cache:       cache,
-		settings:    settingsProvider,
-		overrideDir: overrideDir,
+		distFS:       distFS,
+		fileServer:   fileServer,
+		baseHTML:     baseHTML,
+		cache:        cache,
+		settings:     settingsProvider,
+		overrideDir:  overrideDir,
+		settingsSlot: settingsSlot,
 	}, nil
 }
 
@@ -228,7 +236,13 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
 	// Create the script tag to inject with nonce placeholder
 	// The placeholder will be replaced with actual nonce at request time
-	script := []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__APP_CONFIG__=` + string(settingsJSON) + `;</script>`)
+	script := []byte(`<script nonce="` + NonceHTMLPlaceholder + `">` + settingsScriptPrefix + string(settingsJSON) + `;</script>`)
+
+	if s.settingsSlot != "" {
+		result := bytes.Replace(s.baseHTML, []byte(settingsSlotPlaceholder), script, 1)
+		result = injectSiteTitle(result, settingsJSON)
+		return result
+	}
 
 	// Inject before </head>
 	headClose := []byte("</head>")
@@ -263,6 +277,31 @@ func injectSiteTitle(html, settingsJSON []byte) []byte {
 	buf.Write(newTitle)
 	buf.Write(html[titleEnd+len("</title>"):])
 	return buf.Bytes()
+}
+
+func detectSettingsSlot(html []byte) string {
+	prefix := []byte(settingsScriptPrefix)
+	idx := bytes.Index(html, prefix)
+	if idx == -1 {
+		return ""
+	}
+	scriptStart := bytes.LastIndex(html[:idx], []byte("<script"))
+	if scriptStart == -1 {
+		return ""
+	}
+	scriptEndRel := bytes.Index(html[idx:], []byte("</script>"))
+	if scriptEndRel == -1 {
+		return ""
+	}
+	scriptEnd := idx + scriptEndRel + len("</script>")
+	return string(html[scriptStart:scriptEnd])
+}
+
+func removeInjectedSettings(html []byte, slot string) []byte {
+	if slot == "" {
+		return html
+	}
+	return bytes.Replace(html, []byte(slot), []byte(settingsSlotPlaceholder), 1)
 }
 
 // replaceNoncePlaceholder replaces the nonce placeholder with actual nonce value

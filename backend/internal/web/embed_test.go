@@ -143,6 +143,23 @@ func TestReplaceNoncePlaceholder(t *testing.T) {
 	})
 }
 
+func TestSettingsSlotHelpers(t *testing.T) {
+	t.Run("detects_and_removes_existing_app_config_script", func(t *testing.T) {
+		html := []byte(`<html><head><script nonce="abc">window.__APP_CONFIG__={"site_name":"Demo"};</script></head><body></body></html>`)
+		slot := detectSettingsSlot(html)
+		require.NotEmpty(t, slot)
+		assert.Contains(t, slot, settingsScriptPrefix)
+
+		cleaned := removeInjectedSettings(html, slot)
+		assert.NotContains(t, string(cleaned), settingsScriptPrefix)
+	})
+
+	t.Run("returns_empty_when_no_app_config_script", func(t *testing.T) {
+		html := []byte(`<html><head></head><body></body></html>`)
+		assert.Empty(t, detectSettingsSlot(html))
+	})
+}
+
 func TestNonceHTMLPlaceholder(t *testing.T) {
 	t.Run("constant_value", func(t *testing.T) {
 		assert.Equal(t, "__CSP_NONCE_VALUE__", NonceHTMLPlaceholder)
@@ -593,6 +610,20 @@ func TestNewFrontendServer(t *testing.T) {
 		assert.NotNil(t, server.baseHTML)
 		assert.NotNil(t, server.cache)
 		assert.Equal(t, dir, server.overrideDir)
+	})
+
+	t.Run("strips_preinjected_app_config_from_external_html", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+		dir := t.TempDir()
+		html := `<!doctype html><html><head><title>External</title><script nonce="abc">window.__APP_CONFIG__={"site_name":"Demo"};</script></head><body></body></html>`
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(html), 0o644))
+
+		server, err := NewExternalFrontendServer(provider, dir)
+		require.NoError(t, err)
+		assert.NotContains(t, string(server.baseHTML), settingsScriptPrefix)
+		assert.NotEmpty(t, server.settingsSlot)
 	})
 }
 
