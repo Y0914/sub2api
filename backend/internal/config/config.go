@@ -507,6 +507,8 @@ type ServerConfig struct {
 	Host               string    `mapstructure:"host"`
 	Port               int       `mapstructure:"port"`
 	Mode               string    `mapstructure:"mode"`                  // debug/release
+	FrontendMode       string    `mapstructure:"frontend_mode"`         // embedded/external
+	FrontendDir        string    `mapstructure:"frontend_dir"`          // external frontend root dir when frontend_mode=external
 	FrontendURL        string    `mapstructure:"frontend_url"`          // 前端基础 URL，用于生成邮件中的外部链接
 	ReadHeaderTimeout  int       `mapstructure:"read_header_timeout"`   // 读取请求头超时（秒）
 	IdleTimeout        int       `mapstructure:"idle_timeout"`          // 空闲连接超时（秒）
@@ -1405,6 +1407,8 @@ func setDefaults() {
 	viper.SetDefault("server.host", "0.0.0.0")
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("server.mode", "release")
+	viper.SetDefault("server.frontend_mode", "embedded")
+	viper.SetDefault("server.frontend_dir", "data/public")
 	viper.SetDefault("server.frontend_url", "")
 	viper.SetDefault("server.read_header_timeout", 30) // 30秒读取请求头
 	viper.SetDefault("server.idle_timeout", 120)       // 120秒空闲超时
@@ -1879,6 +1883,21 @@ func (c *Config) Validate() error {
 	geminiClientSecret := strings.TrimSpace(c.Gemini.OAuth.ClientSecret)
 	if (geminiClientID == "") != (geminiClientSecret == "") {
 		return fmt.Errorf("gemini.oauth.client_id and gemini.oauth.client_secret must be both set or both empty")
+	}
+
+	if strings.TrimSpace(c.Server.FrontendMode) == "" {
+		c.Server.FrontendMode = "embedded"
+	}
+	c.Server.FrontendMode = strings.ToLower(strings.TrimSpace(c.Server.FrontendMode))
+	switch c.Server.FrontendMode {
+	case "embedded", "external":
+	default:
+		return fmt.Errorf("server.frontend_mode must be one of: embedded/external")
+	}
+	if c.Server.FrontendMode == "external" {
+		if strings.TrimSpace(c.Server.FrontendDir) == "" {
+			return fmt.Errorf("server.frontend_dir is required when server.frontend_mode=external")
+		}
 	}
 
 	if strings.TrimSpace(c.Server.FrontendURL) != "" {

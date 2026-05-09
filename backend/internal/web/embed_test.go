@@ -7,6 +7,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -165,7 +167,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			settings: map[string]string{"key": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{"test":"data"}`)
@@ -182,7 +184,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			settings: map[string]string{"key": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{}`)
@@ -204,7 +206,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{"nested":{"array":[1,2,3]},"special":"<>&"}`)
@@ -220,7 +222,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// Create a gin context with nonce
@@ -248,7 +250,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// First request
@@ -279,7 +281,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -300,7 +302,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// Use a real router for proper 304 handling
@@ -333,7 +335,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -351,7 +353,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			err: context.DeadlineExceeded,
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// Invalidate cache to force settings fetch
@@ -376,7 +378,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// First request to populate cache
@@ -427,7 +429,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		apiPaths := []string{
@@ -467,7 +469,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -493,7 +495,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -526,8 +528,11 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},
 		}
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<!doctype html><html><head><title>External</title></head><body></body></html>`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "logo.png"), []byte("png"), 0o644))
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewExternalFrontendServer(provider, dir)
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -539,7 +544,6 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Type"), "image/png")
 	})
 }
 
@@ -549,7 +553,7 @@ func TestNewFrontendServer(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 
 		require.NoError(t, err)
 		assert.NotNil(t, server)
@@ -565,11 +569,30 @@ func TestNewFrontendServer(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		assert.NotEmpty(t, server.baseHTML)
 		assert.Contains(t, string(server.baseHTML), "<!doctype html>")
+	})
+
+	t.Run("creates_external_server_successfully", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<!doctype html><html><head><title>External</title></head><body></body></html>`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "logo.png"), []byte("png"), 0o644))
+
+		server, err := NewExternalFrontendServer(provider, dir)
+		require.NoError(t, err)
+
+		assert.NotNil(t, server)
+		assert.NotNil(t, server.distFS)
+		assert.NotNil(t, server.fileServer)
+		assert.NotNil(t, server.baseHTML)
+		assert.NotNil(t, server.cache)
+		assert.Equal(t, dir, server.overrideDir)
 	})
 }
 

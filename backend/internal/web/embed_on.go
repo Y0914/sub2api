@@ -32,7 +32,8 @@ type PublicSettingsProvider interface {
 	GetPublicSettingsForInjection(ctx context.Context) (any, error)
 }
 
-// FrontendServer serves the embedded frontend with settings injection
+// FrontendServer serves frontend assets with settings injection.
+// It can be backed by embedded dist files or an external frontend directory.
 type FrontendServer struct {
 	distFS      fs.FS
 	fileServer  http.Handler
@@ -42,23 +43,44 @@ type FrontendServer struct {
 	overrideDir string // local file override directory
 }
 
-// NewFrontendServer creates a new frontend server with settings injection
-func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer, error) {
-	distFS, err := fs.Sub(frontendFS, "dist")
-	if err != nil {
-		return nil, err
-	}
+// NewFrontendServer creates a frontend server with settings injection.
+// When externalDir is non-empty, all assets are served from that directory.
+// When externalDir is empty, embedded assets are used with data/public overrides.
+func NewFrontendServer(settingsProvider PublicSettingsProvider, externalDir string) (*FrontendServer, error) {
+	var (
+		distFS      fs.FS
+		baseHTML    []byte
+		fileServer  http.Handler
+		overrideDir string
+		err         error
+	)
 
-	// Read base HTML once
-	file, err := distFS.Open("index.html")
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = file.Close() }()
+	if strings.TrimSpace(externalDir) != "" {
+		overrideDir = strings.TrimSpace(externalDir)
+		distFS = os.DirFS(overrideDir)
+		fileServer = http.FileServer(http.Dir(overrideDir))
+		baseHTML, err = os.ReadFile(filepath.Join(overrideDir, "index.html"))
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		distFS, err = fs.Sub(frontendFS, "dist")
+		if err != nil {
+			return nil, err
+		}
+		fileServer = http.FileServer(http.FS(distFS))
+		overrideDir = filepath.Join("data", "public")
 
-	baseHTML, err := io.ReadAll(file)
-	if err != nil {
-		return nil, err
+		file, err := distFS.Open("index.html")
+		if err != nil {
+			return nil, err
+		}
+		defer func() { _ = file.Close() }()
+
+		baseHTML, err = io.ReadAll(file)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	cache := NewHTMLCache()
@@ -66,12 +88,17 @@ func NewFrontendServer(settingsProvider PublicSettingsProvider) (*FrontendServer
 
 	return &FrontendServer{
 		distFS:      distFS,
-		fileServer:  http.FileServer(http.FS(distFS)),
+		fileServer:  fileServer,
 		baseHTML:    baseHTML,
 		cache:       cache,
 		settings:    settingsProvider,
-		overrideDir: filepath.Join("data", "public"),
+		overrideDir: overrideDir,
 	}, nil
+}
+
+// NewExternalFrontendServer creates a frontend server that serves all assets from an external directory.
+func NewExternalFrontendServer(settingsProvider PublicSettingsProvider, frontendDir string) (*FrontendServer, error) {
+	return NewFrontendServer(settingsProvider, frontendDir)
 }
 
 // InvalidateCache invalidates the HTML cache (call when settings change)

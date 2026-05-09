@@ -818,6 +818,48 @@ func TestValidateServerFrontendURL(t *testing.T) {
 	}
 }
 
+func TestValidateServerFrontendMode(t *testing.T) {
+	resetViperWithJWTSecret(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+
+	cfg.Server.FrontendMode = "embedded"
+	cfg.Server.FrontendDir = ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() embedded frontend_mode error: %v", err)
+	}
+
+	cfg.Server.FrontendMode = "external"
+	cfg.Server.FrontendDir = "data/public"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() external frontend_mode error: %v", err)
+	}
+
+	cfg.Server.FrontendMode = "EXTERNAL"
+	cfg.Server.FrontendDir = "data/public"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate() should normalize uppercase frontend_mode: %v", err)
+	}
+	if cfg.Server.FrontendMode != "external" {
+		t.Fatalf("Validate() should normalize frontend_mode to lowercase, got %q", cfg.Server.FrontendMode)
+	}
+
+	cfg.Server.FrontendMode = "invalid"
+	cfg.Server.FrontendDir = "data/public"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Validate() should reject invalid server.frontend_mode")
+	}
+
+	cfg.Server.FrontendMode = "external"
+	cfg.Server.FrontendDir = "   "
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("Validate() should require server.frontend_dir for external mode")
+	}
+}
+
 func TestValidateFrontendRedirectURL(t *testing.T) {
 	if err := ValidateFrontendRedirectURL("/auth/callback"); err != nil {
 		t.Fatalf("ValidateFrontendRedirectURL relative error: %v", err)
