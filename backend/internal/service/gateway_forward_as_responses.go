@@ -193,6 +193,9 @@ func (s *GatewayService) ForwardAsResponses(
 func ExtractResponsesReasoningEffortFromBody(body []byte) *string {
 	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
 	if raw == "" {
+		raw = strings.TrimSpace(gjson.GetBytes(body, "extra_body.reasoning.effort").String())
+	}
+	if raw == "" {
 		return nil
 	}
 	normalized := normalizeOpenAIReasoningEffort(raw)

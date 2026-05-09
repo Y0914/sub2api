@@ -5753,6 +5753,15 @@ func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, 
 		}
 	}
 
+	// Some OpenAI-compatible clients tunnel reasoning config under extra_body.
+	if extraBody, ok := reqBody["extra_body"].(map[string]any); ok {
+		if reasoning, ok := extraBody["reasoning"].(map[string]any); ok {
+			if effort, ok := reasoning["effort"].(string); ok {
+				return normalizeOpenAIReasoningEffort(effort), true
+			}
+		}
+	}
+
 	// Fallback: some clients may use a flat field.
 	if effort, ok := reqBody["reasoning_effort"].(string); ok {
 		return normalizeOpenAIReasoningEffort(effort), true
@@ -5881,6 +5890,9 @@ func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 
 func extractOpenAIReasoningEffortFromBody(body []byte, requestedModel string) *string {
 	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+	if reasoningEffort == "" {
+		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "extra_body.reasoning.effort").String())
+	}
 	if reasoningEffort == "" {
 		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
 	}

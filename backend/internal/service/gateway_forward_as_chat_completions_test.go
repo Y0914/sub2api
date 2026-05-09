@@ -29,6 +29,12 @@ func TestExtractCCReasoningEffortFromBody(t *testing.T) {
 		require.Equal(t, "xhigh", *got)
 	})
 
+	t.Run("extra_body reasoning effort", func(t *testing.T) {
+		got := extractCCReasoningEffortFromBody([]byte(`{"extra_body":{"reasoning":{"effort":"xhigh"}}}`))
+		require.NotNil(t, got)
+		require.Equal(t, "xhigh", *got)
+	})
+
 	t.Run("missing effort", func(t *testing.T) {
 		require.Nil(t, extractCCReasoningEffortFromBody([]byte(`{"model":"gpt-5"}`)))
 	})
