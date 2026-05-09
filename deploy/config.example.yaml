@@ -24,6 +24,13 @@ server:
   # 用于生成邮件中的外部链接（例如：重置密码链接）的前端基础地址
   # Example: "https://example.com"
   frontend_url: ""
+  # Frontend delivery mode: "embedded" (default) or "external"
+  # 前端交付模式："embedded"（默认，使用二进制/镜像内置前端）或 "external"（使用外置 dist 目录）
+  frontend_mode: "embedded"
+  # External frontend dist directory (required when frontend_mode=external)
+  # 外置前端 dist 目录（frontend_mode=external 时必填）
+  # Example: "/opt/sub2api/frontend-dist"
+  frontend_dir: "data/public"
   # Trusted proxies for X-Forwarded-For parsing (CIDR/IP). Empty disables trusted proxies.
   # 信任的代理地址（CIDR/IP 格式），用于解析 X-Forwarded-For 头。留空则禁用代理信任。
   trusted_proxies: []
