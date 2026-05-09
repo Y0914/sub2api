@@ -39,12 +39,8 @@ jobs:
         working-directory: frontend
         run: pnpm build
 
-      - name: Prepare embedded frontend assets
-        run: |
-          rm -rf backend/internal/web/dist
-          mkdir -p backend/internal/web/dist
-          cp -a frontend/dist/. backend/internal/web/dist/
-          test -f backend/internal/web/dist/index.html
+      - name: Verify embedded frontend assets
+        run: test -f backend/internal/web/dist/index.html
 
       - name: Run backend tests
         working-directory: backend
