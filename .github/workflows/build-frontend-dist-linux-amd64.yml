@@ -1,0 +1,95 @@
+name: Build frontend dist + linux amd64
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/external-frontend-mode
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify Go version
+        run: |
+          go version | grep -q 'go1.26.3'
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build frontend dist
+        working-directory: frontend
+        run: pnpm build
+
+      - name: Verify dist files
+        run: |
+          test -f backend/internal/web/dist/index.html
+          find backend/internal/web/dist/assets -maxdepth 1 -type f | sort | sed -n '1,200p'
+
+      - name: Run backend tests
+        working-directory: backend
+        run: go test ./internal/config ./internal/server ./internal/web
+
+      - name: Build linux amd64 embedded binary
+        working-directory: backend
+        env:
+          CGO_ENABLED: 0
+          GOOS: linux
+          GOARCH: amd64
+        run: go build -tags=embed -o /tmp/sub2api-linux-amd64 ./cmd/server
+
+      - name: Pack frontend dist
+        run: tar -C backend/internal/web -czf /tmp/frontend-dist.tar.gz dist
+
+      - name: Checksums
+        run: |
+          sha256sum /tmp/sub2api-linux-amd64 | tee /tmp/sub2api-linux-amd64.sha256
+          sha256sum /tmp/frontend-dist.tar.gz | tee /tmp/frontend-dist.tar.gz.sha256
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: sub2api-linux-amd64
+          path: |
+            /tmp/sub2api-linux-amd64
+            /tmp/sub2api-linux-amd64.sha256
+
+      - name: Upload frontend dist artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist-complete
+          path: |
+            /tmp/frontend-dist.tar.gz
+            /tmp/frontend-dist.tar.gz.sha256
+
+      - name: Upload raw dist listing
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-dist-raw
+          path: backend/internal/web/dist/
