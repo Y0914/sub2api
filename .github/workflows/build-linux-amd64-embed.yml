@@ -32,7 +32,7 @@ jobs:
           cd frontend
           pnpm install
           pnpm build
-          test -f dist/index.html
+          ls -lah dist && test -f dist/index.html
 
       - name: Build backend linux amd64 (embed)
         working-directory: backend
