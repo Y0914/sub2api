@@ -33,8 +33,9 @@ jobs:
           test -f dist/index.html
 
       - name: Build backend linux amd64 (embed)
+        working-directory: backend
         run: |
-          cd backend
+          ls -lah go.sum
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags=embed -ldflags='-s -w' -o ../sub2api-linux-amd64 ./cmd/server
 
       - name: Upload binary artifact
