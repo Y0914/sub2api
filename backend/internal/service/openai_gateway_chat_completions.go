@@ -39,82 +39,6 @@ var cursorResponsesUnsupportedFields = []string{
 	"stream_options",
 }
 
-const (
-	openAIReasoningDebugAPIKeyID int64  = 8
-	openAIReasoningDebugModel           = "gpt-5.4"
-	openAIReasoningDebugRequestKey      = "api_key"
-	openAIReasoningDebugRequestIDHeader = "X-Request-ID"
-)
-
-type openAIReasoningDebugFieldSpec struct {
-	Name string
-	Path string
-}
-
-var openAIReasoningDebugFieldSpecs = []openAIReasoningDebugFieldSpec{
-	{Name: "reasoning_effort", Path: "reasoning_effort"},
-	{Name: "reasoning_nested_effort", Path: "reasoning.effort"},
-	{Name: "extra_body_reasoning_effort", Path: "extra_body.reasoning.effort"},
-	{Name: "output_config_effort", Path: "output_config.effort"},
-}
-
-func shouldLogOpenAIReasoningDebug(c *gin.Context, requestedModel string) bool {
-	if c == nil || strings.TrimSpace(requestedModel) != openAIReasoningDebugModel {
-		return false
-	}
-	rawAPIKey, ok := c.Get(openAIReasoningDebugRequestKey)
-	if !ok || rawAPIKey == nil {
-		return false
-	}
-	apiKey, ok := rawAPIKey.(*APIKey)
-	if !ok || apiKey == nil {
-		return false
-	}
-	return apiKey.ID == openAIReasoningDebugAPIKeyID
-}
-
-func openAIReasoningDebugMetaFields(c *gin.Context, account *Account, stage string, requestedModel string, billingModel string, upstreamModel string, responsesShape bool, clientStream bool) []zap.Field {
-	fields := []zap.Field{
-		zap.String("stage", stage),
-		zap.String("requested_model", strings.TrimSpace(requestedModel)),
-		zap.String("billing_model", strings.TrimSpace(billingModel)),
-		zap.String("upstream_model", strings.TrimSpace(upstreamModel)),
-		zap.Bool("responses_shape", responsesShape),
-		zap.Bool("client_stream", clientStream),
-	}
-	if c != nil {
-		if requestID := strings.TrimSpace(c.Writer.Header().Get(openAIReasoningDebugRequestIDHeader)); requestID != "" {
-			fields = append(fields, zap.String("gateway_request_id", requestID))
-		}
-		if rawAPIKey, ok := c.Get(openAIReasoningDebugRequestKey); ok {
-			if apiKey, ok := rawAPIKey.(*APIKey); ok && apiKey != nil {
-				fields = append(fields, zap.Int64("api_key_id", apiKey.ID))
-			}
-		}
-	}
-	if account != nil {
-		fields = append(fields,
-			zap.Int64("account_id", account.ID),
-			zap.String("account_name", account.Name),
-			zap.String("account_type", account.Type),
-		)
-	}
-	return fields
-}
-
-func openAIReasoningDebugBodyFields(prefix string, body []byte) []zap.Field {
-	fields := []zap.Field{zap.Int(prefix+"_body_bytes", len(body))}
-	for _, spec := range openAIReasoningDebugFieldSpecs {
-		result := gjson.GetBytes(body, spec.Path)
-		key := prefix + "_" + spec.Name
-		fields = append(fields, zap.Bool(key+"_present", result.Exists()))
-		if result.Exists() {
-			fields = append(fields, zap.String(key+"_value", strings.TrimSpace(result.String())))
-		}
-	}
-	return fields
-}
-
 // ForwardAsChatCompletions accepts a Chat Completions request body, converts it
 // to OpenAI Responses API format, forwards to the OpenAI upstream, and converts
 // the response back to Chat Completions format.
@@ -229,22 +153,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		}
 	}
 
-	reasoningDebugEnabled := shouldLogOpenAIReasoningDebug(c, originalModel)
-	reasoningDebugLogger := logger.FromContext(ctx)
-	if reasoningDebugEnabled {
-		fields := append(
-			openAIReasoningDebugMetaFields(c, account, "chat_completions_inbound", originalModel, billingModel, upstreamModel, isResponsesShape, clientStream),
-			openAIReasoningDebugBodyFields("inbound", body)...,
-		)
-		reasoningDebugLogger.Info("openai.reasoning_debug", fields...)
-
-		fields = append(
-			openAIReasoningDebugMetaFields(c, account, "responses_pre_codex", originalModel, billingModel, upstreamModel, isResponsesShape, clientStream),
-			openAIReasoningDebugBodyFields("responses_pre_codex", responsesBody)...,
-		)
-		reasoningDebugLogger.Info("openai.reasoning_debug", fields...)
-	}
-
 	logFields := []zap.Field{
 		zap.Int64("account_id", account.ID),
 		zap.String("original_model", originalModel),
@@ -279,13 +187,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		if err != nil {
 			return nil, fmt.Errorf("remarshal after codex transform: %w", err)
 		}
-		if reasoningDebugEnabled {
-			fields := append(
-				openAIReasoningDebugMetaFields(c, account, "responses_post_codex", originalModel, billingModel, upstreamModel, isResponsesShape, clientStream),
-				openAIReasoningDebugBodyFields("responses_post_codex", responsesBody)...,
-			)
-			reasoningDebugLogger.Info("openai.reasoning_debug", fields...)
-		}
 	}
 
 	// 4b. Apply OpenAI fast policy (may filter service_tier or block the request).
@@ -298,13 +199,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 		return nil, policyErr
 	}
 	responsesBody = updatedBody
-	if reasoningDebugEnabled {
-		fields := append(
-			openAIReasoningDebugMetaFields(c, account, "responses_post_fast_policy", originalModel, billingModel, upstreamModel, isResponsesShape, clientStream),
-			openAIReasoningDebugBodyFields("responses_post_fast_policy", responsesBody)...,
-		)
-		reasoningDebugLogger.Info("openai.reasoning_debug", fields...)
-	}
 
 	// 5. Get access token
 	token, _, err := s.GetAccessToken(ctx, account)
@@ -322,14 +216,6 @@ func (s *OpenAIGatewayService) ForwardAsChatCompletions(
 
 	if promptCacheKey != "" {
 		upstreamReq.Header.Set("session_id", generateSessionUUID(promptCacheKey))
-	}
-	if reasoningDebugEnabled {
-		fields := openAIReasoningDebugMetaFields(c, account, "upstream_request_headers", originalModel, billingModel, upstreamModel, isResponsesShape, clientStream)
-		fields = append(fields,
-			zap.Bool("session_id_header_present", strings.TrimSpace(upstreamReq.Header.Get("session_id")) != ""),
-			zap.String("upstream_url", upstreamReq.URL.String()),
-		)
-		reasoningDebugLogger.Info("openai.reasoning_debug", fields...)
 	}
 
 	// 7. Send request
