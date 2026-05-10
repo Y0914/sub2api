@@ -302,6 +302,10 @@ gateway:
     # 调度与粘连参数
     lb_top_k: 7
     sticky_session_ttl_seconds: 3600
+    # 当客户端未提供 session_id/conversation_id/prompt_cache_key 时，
+    # 按 API key + model 做隐式粘连，减少同一调用链跨账号漂移
+    implicit_sticky_enabled: true
+    implicit_sticky_ttl_seconds: 1800
     # 会话哈希迁移兼容开关：新 key 未命中时回退读取旧 SHA-256 key
     session_hash_read_old_fallback: true
     # 会话哈希迁移兼容开关：写入时双写旧 SHA-256 key（短 TTL）
