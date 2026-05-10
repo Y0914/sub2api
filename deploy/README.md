@@ -9,6 +9,28 @@ This directory contains files for deploying Sub2API on Linux servers.
 | **Docker Compose** | Quick setup, all-in-one | Not needed (auto-setup) |
 | **Binary Install** | Production servers, systemd | Web-based wizard |
 
+## Frontend Delivery Modes
+
+Sub2API supports two frontend delivery modes:
+
+| Mode | Config | Description |
+|------|--------|-------------|
+| **Embedded** | `server.frontend_mode=embedded` | Default mode. Uses the frontend bundled into the binary/image. |
+| **External** | `server.frontend_mode=external` + `server.frontend_dir=/path/to/dist` | Serves the web UI from an external frontend build directory. |
+
+Example:
+
+```yaml
+server:
+  frontend_mode: external
+  frontend_dir: /opt/sub2api/frontend-dist
+```
+
+External mode requirements:
+- `frontend_dir` must contain `index.html`
+- Static assets must keep their built relative paths (for example `assets/...`)
+- Public settings injection, CSP nonce injection, SPA fallback, and cache/ETag behavior are still applied
+
 ## Files
 
 | File | Description |

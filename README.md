@@ -45,6 +45,32 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 - **Built-in Payment System** - Supports EasyPay, Alipay, WeChat Pay, and Stripe for user self-service top-up, no separate payment service needed ([Configuration Guide](docs/PAYMENT.md))
 - **Admin Dashboard** - Web interface for monitoring and management
 - **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
+- **Configurable Frontend Delivery** - Run with the built-in embedded web UI or serve the frontend from an external `dist/` directory via config
+
+## Frontend Delivery Modes
+
+Sub2API now supports two frontend delivery modes:
+
+- `server.frontend_mode: embedded` (default)
+  - Uses the frontend bundled into the release binary/image
+  - Best for standard installs and one-file deployments
+- `server.frontend_mode: external`
+  - Serves `index.html` and static assets from `server.frontend_dir`
+  - Best when you want to customize or replace the frontend without rebuilding the Go backend
+
+Example:
+
+```yaml
+server:
+  frontend_mode: external
+  frontend_dir: /opt/sub2api/frontend-dist
+```
+
+Requirements for external mode:
+
+- `server.frontend_dir` must contain `index.html`
+- Static assets should remain under the same relative paths as the built frontend output (for example `assets/...`)
+- Public settings injection, CSP nonce injection, SPA fallback, and ETag/cache behavior remain enabled in external mode
 
 ## ❤️ Sponsors
 

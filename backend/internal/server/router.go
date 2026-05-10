@@ -61,9 +61,21 @@ func SetupRouter(
 		return nil
 	}))
 
-	// Serve embedded frontend with settings injection if available
-	if web.HasEmbeddedFrontend() {
-		frontendServer, err := web.NewFrontendServer(settingService)
+	// Serve configured frontend with settings injection
+	if cfg.Server.FrontendMode == "external" {
+		frontendServer, err := web.NewExternalFrontendServer(settingService, cfg.Server.FrontendDir)
+		if err != nil {
+			log.Printf("Warning: Failed to create external frontend server from %s: %v", cfg.Server.FrontendDir, err)
+			settingService.SetOnUpdateCallback(refreshFrameOrigins)
+		} else {
+			settingService.SetOnUpdateCallback(func() {
+				frontendServer.InvalidateCache()
+				refreshFrameOrigins()
+			})
+			r.Use(frontendServer.Middleware())
+		}
+	} else if web.HasEmbeddedFrontend() {
+		frontendServer, err := web.NewFrontendServer(settingService, "")
 		if err != nil {
 			log.Printf("Warning: Failed to create frontend server with settings injection: %v, using legacy mode", err)
 			r.Use(web.ServeEmbeddedFrontend())

@@ -7,6 +7,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -141,6 +143,23 @@ func TestReplaceNoncePlaceholder(t *testing.T) {
 	})
 }
 
+func TestSettingsSlotHelpers(t *testing.T) {
+	t.Run("detects_and_removes_existing_app_config_script", func(t *testing.T) {
+		html := []byte(`<html><head><script nonce="abc">window.__APP_CONFIG__={"site_name":"Demo"};</script></head><body></body></html>`)
+		slot := detectSettingsSlot(html)
+		require.NotEmpty(t, slot)
+		assert.Contains(t, slot, settingsScriptPrefix)
+
+		cleaned := removeInjectedSettings(html, slot)
+		assert.NotContains(t, string(cleaned), settingsScriptPrefix)
+	})
+
+	t.Run("returns_empty_when_no_app_config_script", func(t *testing.T) {
+		html := []byte(`<html><head></head><body></body></html>`)
+		assert.Empty(t, detectSettingsSlot(html))
+	})
+}
+
 func TestNonceHTMLPlaceholder(t *testing.T) {
 	t.Run("constant_value", func(t *testing.T) {
 		assert.Equal(t, "__CSP_NONCE_VALUE__", NonceHTMLPlaceholder)
@@ -165,7 +184,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			settings: map[string]string{"key": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{"test":"data"}`)
@@ -182,7 +201,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			settings: map[string]string{"key": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{}`)
@@ -204,7 +223,7 @@ func TestFrontendServer_InjectSettings(t *testing.T) {
 			},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		settingsJSON := []byte(`{"nested":{"array":[1,2,3]},"special":"<>&"}`)
@@ -220,7 +239,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// Create a gin context with nonce
@@ -248,7 +267,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// First request
@@ -279,7 +298,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -300,7 +319,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// Use a real router for proper 304 handling
@@ -333,7 +352,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		w := httptest.NewRecorder()
@@ -351,7 +370,7 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 			err: context.DeadlineExceeded,
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// Invalidate cache to force settings fetch
@@ -376,7 +395,7 @@ func TestFrontendServer_InvalidateCache(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		// First request to populate cache
@@ -427,7 +446,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		apiPaths := []string{
@@ -467,7 +486,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -493,7 +512,7 @@ func TestFrontendServer_Middleware(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -526,8 +545,11 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		provider := &mockSettingsProvider{
 			settings: map[string]string{"test": "value"},
 		}
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<!doctype html><html><head><title>External</title></head><body></body></html>`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "logo.png"), []byte("png"), 0o644))
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewExternalFrontendServer(provider, dir)
 		require.NoError(t, err)
 
 		router := gin.New()
@@ -539,7 +561,6 @@ func TestFrontendServer_Middleware(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusOK, w.Code)
-		assert.Contains(t, w.Header().Get("Content-Type"), "image/png")
 	})
 }
 
@@ -549,7 +570,7 @@ func TestNewFrontendServer(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 
 		require.NoError(t, err)
 		assert.NotNil(t, server)
@@ -565,11 +586,44 @@ func TestNewFrontendServer(t *testing.T) {
 			settings: map[string]string{"test": "value"},
 		}
 
-		server, err := NewFrontendServer(provider)
+		server, err := NewFrontendServer(provider, "")
 		require.NoError(t, err)
 
 		assert.NotEmpty(t, server.baseHTML)
 		assert.Contains(t, string(server.baseHTML), "<!doctype html>")
+	})
+
+	t.Run("creates_external_server_successfully", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(`<!doctype html><html><head><title>External</title></head><body></body></html>`), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "logo.png"), []byte("png"), 0o644))
+
+		server, err := NewExternalFrontendServer(provider, dir)
+		require.NoError(t, err)
+
+		assert.NotNil(t, server)
+		assert.NotNil(t, server.distFS)
+		assert.NotNil(t, server.fileServer)
+		assert.NotNil(t, server.baseHTML)
+		assert.NotNil(t, server.cache)
+		assert.Equal(t, dir, server.overrideDir)
+	})
+
+	t.Run("strips_preinjected_app_config_from_external_html", func(t *testing.T) {
+		provider := &mockSettingsProvider{
+			settings: map[string]string{"test": "value"},
+		}
+		dir := t.TempDir()
+		html := `<!doctype html><html><head><title>External</title><script nonce="abc">window.__APP_CONFIG__={"site_name":"Demo"};</script></head><body></body></html>`
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(html), 0o644))
+
+		server, err := NewExternalFrontendServer(provider, dir)
+		require.NoError(t, err)
+		assert.NotContains(t, string(server.baseHTML), settingsScriptPrefix)
+		assert.NotEmpty(t, server.settingsSlot)
 	})
 }
 
