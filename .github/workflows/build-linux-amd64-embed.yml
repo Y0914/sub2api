@@ -32,12 +32,7 @@ jobs:
           cd frontend
           pnpm install
           pnpm build
-          echo "PWD=$(pwd)"
-          echo "List frontend/"
-          ls -lah .
-          echo "List dist candidates"
-          find . -maxdepth 4 -type f -name index.html | head -20
-          test -f dist/index.html
+          test -f ../backend/internal/web/dist/index.html
 
       - name: Build backend linux amd64 (embed)
         working-directory: backend
