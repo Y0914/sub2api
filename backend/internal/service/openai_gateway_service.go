@@ -1188,6 +1188,12 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	}
 
 	sessionID := explicitOpenAISessionID(c, body)
+	if sessionID == "" && s.openAIImplicitStickyEnabled() && len(body) > 0 {
+		requestedModel := strings.TrimSpace(gjson.GetBytes(body, "model").String())
+		if implicitKey := s.openAIImplicitStickyKey(c, requestedModel); implicitKey != "" {
+			sessionID = implicitKey
+		}
+	}
 	if sessionID == "" && len(body) > 0 {
 		sessionID = deriveOpenAIContentSessionSeed(body)
 	}
@@ -1198,6 +1204,42 @@ func (s *OpenAIGatewayService) GenerateSessionHash(c *gin.Context, body []byte) 
 	currentHash, legacyHash := deriveOpenAISessionHashes(sessionID)
 	attachOpenAILegacySessionHashToGin(c, legacyHash)
 	return currentHash
+}
+
+func openAIHasExplicitSession(c *gin.Context, body []byte) bool {
+	return strings.TrimSpace(explicitOpenAISessionID(c, body)) != ""
+}
+
+func (s *OpenAIGatewayService) openAIImplicitStickyEnabled() bool {
+	if s == nil || s.cfg == nil {
+		return true
+	}
+	return s.cfg.Gateway.OpenAIWS.ImplicitStickyEnabled
+}
+
+func (s *OpenAIGatewayService) openAIImplicitStickyTTL() time.Duration {
+	if s != nil && s.cfg != nil && s.cfg.Gateway.OpenAIWS.ImplicitStickyTTLSeconds > 0 {
+		return time.Duration(s.cfg.Gateway.OpenAIWS.ImplicitStickyTTLSeconds) * time.Second
+	}
+	return 30 * time.Minute
+}
+
+func (s *OpenAIGatewayService) openAIStickyTTLForKey(sessionHash string) time.Duration {
+	if strings.HasPrefix(strings.TrimSpace(sessionHash), openAIImplicitStickyPrefix) {
+		return s.openAIImplicitStickyTTL()
+	}
+	return openaiStickySessionTTL
+}
+
+func (s *OpenAIGatewayService) openAIImplicitStickyKey(c *gin.Context, requestedModel string) string {
+	if !s.openAIImplicitStickyEnabled() {
+		return ""
+	}
+	apiKeyID := getAPIKeyIDFromContext(c)
+	if apiKeyID <= 0 {
+		return ""
+	}
+	return buildOpenAIImplicitStickyKey(apiKeyID, requestedModel)
 }
 
 // GenerateSessionHashWithFallback 先按常规信号生成会话哈希；
@@ -1351,21 +1393,18 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
 
-	// 1. 尝试粘性会话命中
-	// Try sticky session hit
+	// 1. 尝试显式/隐式粘性会话命中
 	if account := s.tryStickySessionHit(ctx, groupID, sessionHash, requestedModel, excludedIDs, requireCompact, stickyAccountID); account != nil {
 		return account, nil
 	}
 
 	// 2. 获取可调度的 OpenAI 账号
-	// Get schedulable OpenAI accounts
 	accounts, err := s.listSchedulableAccounts(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
 
 	// 3. 按优先级 + LRU 选择最佳账号
-	// Select by priority + LRU
 	selected, compactBlocked := s.selectBestAccount(ctx, groupID, accounts, requestedModel, excludedIDs, requireCompact)
 
 	if selected == nil {
@@ -1373,9 +1412,8 @@ func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.C
 	}
 
 	// 4. 设置粘性会话绑定
-	// Set sticky session binding
 	if sessionHash != "" {
-		_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, selected.ID, openaiStickySessionTTL)
+		_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, selected.ID, s.openAIStickyTTLForKey(sessionHash))
 	}
 
 	return s.hydrateSelectedAccount(ctx, selected)
@@ -1434,7 +1472,7 @@ func (s *OpenAIGatewayService) tryStickySessionHit(ctx context.Context, groupID 
 
 	// 刷新会话 TTL 并返回账号
 	// Refresh session TTL and return account
-	_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, openaiStickySessionTTL)
+	_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, s.openAIStickyTTLForKey(sessionHash))
 	return account
 }
 
@@ -1623,7 +1661,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 					} else {
 						result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 						if err == nil && result.Acquired {
-							_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, openaiStickySessionTTL)
+							_ = s.refreshStickySessionTTL(ctx, groupID, sessionHash, s.openAIStickyTTLForKey(sessionHash))
 							return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
 						}
 
@@ -1700,7 +1738,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 			result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 			if err == nil && result.Acquired {
 				if sessionHash != "" {
-					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
+					_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, s.openAIStickyTTLForKey(sessionHash))
 				}
 				return s.newSelectionResult(ctx, fresh, true, result.ReleaseFunc, nil)
 			}
@@ -1776,7 +1814,7 @@ func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Contex
 				result, err := s.tryAcquireAccountSlot(ctx, fresh.ID, fresh.Concurrency)
 				if err == nil && result.Acquired {
 					if sessionHash != "" {
-						_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, openaiStickySessionTTL)
+						_ = s.setStickySessionAccountID(ctx, groupID, sessionHash, fresh.ID, s.openAIStickyTTLForKey(sessionHash))
 					}
 					return s.newSelectionResult(ctx, fresh, true, result.ReleaseFunc, nil)
 				}
@@ -5738,6 +5776,15 @@ func getOpenAIReasoningEffortFromReqBody(reqBody map[string]any) (value string, 
 		}
 	}
 
+	// Some OpenAI-compatible clients tunnel reasoning config under extra_body.
+	if extraBody, ok := reqBody["extra_body"].(map[string]any); ok {
+		if reasoning, ok := extraBody["reasoning"].(map[string]any); ok {
+			if effort, ok := reasoning["effort"].(string); ok {
+				return normalizeOpenAIReasoningEffort(effort), true
+			}
+		}
+	}
+
 	// Fallback: some clients may use a flat field.
 	if effort, ok := reqBody["reasoning_effort"].(string); ok {
 		return normalizeOpenAIReasoningEffort(effort), true
@@ -5866,6 +5913,9 @@ func detectOpenAIPassthroughInstructionsRejectReason(reqModel string, body []byt
 
 func extractOpenAIReasoningEffortFromBody(body []byte, requestedModel string) *string {
 	reasoningEffort := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
+	if reasoningEffort == "" {
+		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "extra_body.reasoning.effort").String())
+	}
 	if reasoningEffort == "" {
 		reasoningEffort = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
 	}
